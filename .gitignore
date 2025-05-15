@@ -1,0 +1,9 @@
+.python-version
+.venv
+*__pycache__*
+tmp
+wandb
+checkpoints
+*notes.*
+outputs
+*.DS_Store
