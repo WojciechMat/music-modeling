@@ -1,0 +1,5 @@
+datasets==3.6.0
+git+https://github.com/Nospoko/midi-tokenizers.git
+setuptools==80.7.1
+streamlit==1.45.1
+streamlit_pianoroll==0.7.1
