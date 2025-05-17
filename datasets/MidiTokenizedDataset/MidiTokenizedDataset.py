@@ -252,7 +252,11 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
 
         # Create overlapping chunks
         chunks = []
-        for i in range(0, len(tokens) - self.config.context_length + 1, self.config.sliding_window_stride):
+        for i in range(
+            0,
+            len(tokens) - self.config.context_length + 1,
+            self.config.sliding_window_stride,
+        ):
             chunk = tokens[i : i + self.config.context_length]
             if len(chunk) == self.config.context_length:
                 chunks.append(chunk)

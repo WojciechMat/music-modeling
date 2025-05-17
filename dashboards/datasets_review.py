@@ -14,7 +14,11 @@ st.set_page_config(page_title="MIDI Dataset Explorer", layout="wide")
 
 
 @st.cache_data
-def load_hf_dataset(dataset_path, split="train", num_examples=1000):
+def load_hf_dataset(
+    dataset_path,
+    split="train",
+    num_examples=1000,
+):
     """Load a dataset from Hugging Face."""
     try:
         dataset = load_dataset(
@@ -44,7 +48,12 @@ def parse_notes(notes_str):
         return pd.DataFrame()
 
 
-def create_tokenizer(min_time_unit=0.01, max_time_step=1.0, n_velocity_bins=32, n_special_ids=1024):
+def create_tokenizer(
+    min_time_unit=0.01,
+    max_time_step=1.0,
+    n_velocity_bins=32,
+    n_special_ids=1024,
+):
     """Create an ExponentialTimeTokenizer with the specified parameters."""
     tokenizer_config = {
         "time_unit": min_time_unit,
@@ -101,14 +110,21 @@ def tokenize_and_visualize(notes_df, tokenizer):
 
     # Most common tokens table
     st.write("### Most Common Tokens")
-    common_tokens_df = pd.DataFrame(most_common_tokens, columns=["Token", "Count"])
+    common_tokens_df = pd.DataFrame(
+        most_common_tokens,
+        columns=["Token", "Count"],
+    )
     common_tokens_df["Percentage"] = common_tokens_df["Count"] / len(tokens) * 100
     st.dataframe(common_tokens_df)
 
     # Top tokens bar chart
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.bar(common_tokens_df["Token"], common_tokens_df["Count"])
-    ax.set_xticklabels(common_tokens_df["Token"], rotation=45, ha="right")
+    ax.set_xticklabels(
+        common_tokens_df["Token"],
+        rotation=45,
+        ha="right",
+    )
     ax.set_xlabel("Token")
     ax.set_ylabel("Count")
     ax.set_title("Most Common Tokens")
@@ -127,11 +143,17 @@ def tokenize_and_visualize(notes_df, tokenizer):
 
     # Create a token-to-id preview
     st.write("### Token to ID Mapping Preview")
-    token_ids = [token_to_id.get(token, 0) for token in tokens[:20]]  # First 20 tokens
+    token_ids = [token_to_id.get(token, 0) for token in tokens[:20]]
     mapping_data = []
 
     for i, (token, token_id) in enumerate(zip(tokens[:20], token_ids)):
-        mapping_data.append({"Position": i, "Token": token, "ID": token_id})
+        mapping_data.append(
+            {
+                "Position": i,
+                "Token": token,
+                "ID": token_id,
+            },
+        )
 
     st.dataframe(pd.DataFrame(mapping_data))
 
@@ -194,7 +216,13 @@ def visualize_tokenized_dataset(dataset, tokenizer=None):
 
     # Token sequence visualization
     fig, ax = plt.subplots(figsize=(12, 3))
-    ax.plot(range(len(input_ids)), input_ids, "-o", alpha=0.5, markersize=3)
+    ax.plot(
+        range(len(input_ids)),
+        input_ids,
+        "-o",
+        alpha=0.5,
+        markersize=3,
+    )
     ax.set_xlabel("Position")
     ax.set_ylabel("Token ID")
     ax.set_title("Token Sequence Visualization")
@@ -229,7 +257,13 @@ def visualize_tokenized_dataset(dataset, tokenizer=None):
                 else:
                     token_str = f"<Unknown Token: {token_id}>"
 
-                tokens_preview.append({"Position": i, "Token ID": token_id, "Token String": token_str})
+                tokens_preview.append(
+                    {
+                        "Position": i,
+                        "Token ID": token_id,
+                        "Token String": token_str,
+                    }
+                )
 
             st.dataframe(pd.DataFrame(tokens_preview))
 
@@ -246,7 +280,12 @@ def visualize_tokenized_dataset(dataset, tokenizer=None):
                 percentage = count / len(input_ids) * 100
 
                 common_tokens_data.append(
-                    {"Token ID": token_id, "Token String": token_str, "Count": count, "Percentage": percentage}
+                    {
+                        "Token ID": token_id,
+                        "Token String": token_str,
+                        "Count": count,
+                        "Percentage": percentage,
+                    }
                 )
 
             st.dataframe(pd.DataFrame(common_tokens_data))
@@ -316,24 +355,56 @@ def main():
         value="./datasets/MidiDataset" if dataset_type == "Aggregated Dataset" else "./datasets/MidiTokenizedDataset",
     )
 
-    dataset_split = st.sidebar.selectbox("Dataset Split", ["train", "validation", "test"], index=0)
+    dataset_split = st.sidebar.selectbox(
+        "Dataset Split",
+        ["train", "validation", "test"],
+        index=0,
+    )
 
-    num_examples = st.sidebar.slider("Max Examples to Load", min_value=10, max_value=10000, value=1000, step=10)
+    num_examples = st.sidebar.slider(
+        "Max Examples to Load",
+        min_value=10,
+        max_value=10000,
+        value=1000,
+        step=10,
+    )
 
     # Tokenizer configuration in sidebar
     st.sidebar.header("Tokenizer Configuration")
 
     min_time_unit = st.sidebar.number_input(
-        "Min Time Unit", min_value=0.001, max_value=0.1, value=0.01, step=0.001, format="%.3f"
+        "Min Time Unit",
+        min_value=0.001,
+        max_value=0.1,
+        value=0.01,
+        step=0.001,
+        format="%.3f",
     )
 
     max_time_step = st.sidebar.number_input(
-        "Max Time Step", min_value=0.1, max_value=10.0, value=1.0, step=0.1, format="%.1f"
+        "Max Time Step",
+        min_value=0.1,
+        max_value=10.0,
+        value=1.0,
+        step=0.1,
+        format="%.1f",
     )
 
-    n_velocity_bins = st.sidebar.slider("Velocity Bins", min_value=4, max_value=128, value=32, step=4)
+    n_velocity_bins = st.sidebar.slider(
+        "Velocity Bins",
+        min_value=4,
+        max_value=128,
+        value=32,
+        step=4,
+    )
 
-    n_special_ids = st.sidebar.slider("Special IDs", min_value=0, max_value=2048, value=1024, step=128)
+    n_special_ids = st.sidebar.slider(
+        "Special IDs",
+        min_value=0,
+        max_value=2048,
+        value=1024,
+        step=128,
+    )
 
     # Create tokenizer
     tokenizer = create_tokenizer(
@@ -345,7 +416,11 @@ def main():
 
     # Load dataset
     with st.spinner("Loading dataset..."):
-        dataset = load_hf_dataset(dataset_path, dataset_split, num_examples)
+        dataset = load_hf_dataset(
+            dataset_path,
+            dataset_split,
+            num_examples,
+        )
 
     if dataset is None:
         st.error(f"Failed to load dataset from {dataset_path}. Please check the path and try again.")
