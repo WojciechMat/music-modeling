@@ -136,7 +136,9 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
         # Load the aggregated dataset
         try:
             train_dataset = datasets.load_dataset(
-                self.config.aggregated_dataset_path, split="train", trust_remote_code=True
+                self.config.aggregated_dataset_path,
+                split="train",
+                trust_remote_code=True,
             )
             logger.info(f"Loaded training dataset with {len(train_dataset)} examples")
         except Exception as e:
@@ -145,7 +147,9 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
 
         try:
             validation_dataset = datasets.load_dataset(
-                self.config.aggregated_dataset_path, split="validation", trust_remote_code=True
+                self.config.aggregated_dataset_path,
+                split="validation",
+                trust_remote_code=True,
             )
             logger.info(f"Loaded validation dataset with {len(validation_dataset)} examples")
         except Exception as e:
@@ -154,7 +158,9 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
 
         try:
             test_dataset = datasets.load_dataset(
-                self.config.aggregated_dataset_path, split="test", trust_remote_code=True
+                self.config.aggregated_dataset_path,
+                split="test",
+                trust_remote_code=True,
             )
             logger.info(f"Loaded test dataset with {len(test_dataset)} examples")
         except Exception as e:
@@ -216,20 +222,6 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
 
             # Tokenize the MIDI data
             tokens = self.tokenizer.encode_notes_df(notes_df)
-
-            # Get the token IDs
-            vocab = self.tokenizer.vocab
-
-            # Convert tokens to IDs if they are strings
-            if tokens and isinstance(tokens[0], str):
-                token_ids = []
-                for token in tokens:
-                    if token in vocab:
-                        token_ids.append(vocab.index(token))
-                    else:
-                        logger.warning(f"Token not in vocabulary: {token}")
-                        token_ids.append(0)  # Use padding token as default
-                return token_ids
 
             return tokens
 

@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 
 import pandas as pd
 import fortepyan as ff
@@ -16,7 +17,12 @@ st.set_page_config(page_title="MIDI Dataset Explorer", layout="wide")
 def load_hf_dataset(dataset_path, split="train", num_examples=1000):
     """Load a dataset from Hugging Face."""
     try:
-        dataset = load_dataset(dataset_path, split=split, trust_remote_code=True)
+        dataset = load_dataset(
+            dataset_path,
+            split=split,
+            trust_remote_code=True,
+            num_proc=32,
+        )
         if len(dataset) > num_examples:
             dataset = dataset.select(range(num_examples))
         return dataset
@@ -59,6 +65,7 @@ def tokenize_and_visualize(notes_df, tokenizer):
 
     tokens = tokenizer.tokenize(notes_df)
 
+    # Count token types
     token_types = {}
     for token in tokens:
         if token.startswith("NOTE_ON"):
@@ -74,8 +81,13 @@ def tokenize_and_visualize(notes_df, tokenizer):
 
         token_types[token_type] = token_types.get(token_type, 0) + 1
 
+    # Count individual tokens
+    token_counter = Counter(tokens)
+    most_common_tokens = token_counter.most_common(20)
+
     st.write("### Token Statistics")
     st.write(f"Total tokens: {len(tokens)}")
+    st.write(f"Unique tokens: {len(token_counter)}")
 
     # Token type distribution
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -87,13 +99,43 @@ def tokenize_and_visualize(notes_df, tokenizer):
     plt.tight_layout()
     st.pyplot(fig)
 
-    # Tokens review
-    st.write("### Tokens")
+    # Most common tokens table
+    st.write("### Most Common Tokens")
+    common_tokens_df = pd.DataFrame(most_common_tokens, columns=["Token", "Count"])
+    common_tokens_df["Percentage"] = common_tokens_df["Count"] / len(tokens) * 100
+    st.dataframe(common_tokens_df)
+
+    # Top tokens bar chart
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(common_tokens_df["Token"], common_tokens_df["Count"])
+    ax.set_xticklabels(common_tokens_df["Token"], rotation=45, ha="right")
+    ax.set_xlabel("Token")
+    ax.set_ylabel("Count")
+    ax.set_title("Most Common Tokens")
+    plt.tight_layout()
+    st.pyplot(fig)
+
+    # Token sequence preview
+    st.write("### Token Sequence Preview")
     st.write(tokens[:100])
 
     if len(tokens) > 100:
         st.write(f"... and {len(tokens) - 100} more tokens")
 
+    # Convert tokens to IDs and show mapping table
+    token_to_id = {token: idx for idx, token in enumerate(tokenizer.vocab)}
+
+    # Create a token-to-id preview
+    st.write("### Token to ID Mapping Preview")
+    token_ids = [token_to_id.get(token, 0) for token in tokens[:20]]  # First 20 tokens
+    mapping_data = []
+
+    for i, (token, token_id) in enumerate(zip(tokens[:20], token_ids)):
+        mapping_data.append({"Position": i, "Token": token, "ID": token_id})
+
+    st.dataframe(pd.DataFrame(mapping_data))
+
+    # Untokenize and compare
     untokenized_df = tokenizer.untokenize(tokens)
     st.write("### Untokenized Notes")
     st.dataframe(untokenized_df)
@@ -160,22 +202,94 @@ def visualize_tokenized_dataset(dataset, tokenizer=None):
 
     # Token values
     st.write(f"Number of tokens: {len(input_ids)}")
-    st.write("First 50 tokens:")
-    st.write(input_ids[:50])
 
     # Token distribution
+    token_counter = Counter(input_ids)
+    most_common_ids = token_counter.most_common(20)
+
     hist_fig, hist_ax = plt.subplots(figsize=(10, 5))
-    hist_ax.hist(input_ids, bins=50)
+    hist_ax.hist(input_ids, bins=min(50, len(token_counter)))
     hist_ax.set_xlabel("Token ID")
     hist_ax.set_ylabel("Frequency")
     hist_ax.set_title("Token ID Distribution")
     st.pyplot(hist_fig)
 
-    # If tokenizer is available, try to decode and visualize
+    # If tokenizer is available, show token ID to string mapping
     if tokenizer is not None:
         try:
-            tokens = [tokenizer.vocab[token_id] for token_id in input_ids]
+            # Token ID Preview with string values
+            st.write("### Token Sequence with String Values")
 
+            # Create mapping table for preview
+            tokens_preview = []
+
+            for i, token_id in enumerate(input_ids[:20]):  # First 20 tokens
+                if token_id < len(tokenizer.vocab):
+                    token_str = tokenizer.vocab[token_id]
+                else:
+                    token_str = f"<Unknown Token: {token_id}>"
+
+                tokens_preview.append({"Position": i, "Token ID": token_id, "Token String": token_str})
+
+            st.dataframe(pd.DataFrame(tokens_preview))
+
+            # Most common tokens table with string values
+            st.write("### Most Common Tokens")
+            common_tokens_data = []
+
+            for token_id, count in most_common_ids:
+                if token_id < len(tokenizer.vocab):
+                    token_str = tokenizer.vocab[token_id]
+                else:
+                    token_str = f"<Unknown Token: {token_id}>"
+
+                percentage = count / len(input_ids) * 100
+
+                common_tokens_data.append(
+                    {"Token ID": token_id, "Token String": token_str, "Count": count, "Percentage": percentage}
+                )
+
+            st.dataframe(pd.DataFrame(common_tokens_data))
+
+            # Show token type distribution
+            token_types = {}
+            for token_id in input_ids:
+                if token_id < len(tokenizer.vocab):
+                    token = tokenizer.vocab[token_id]
+
+                    if token.startswith("NOTE_ON"):
+                        token_type = "NOTE_ON"
+                    elif token.startswith("NOTE_OFF"):
+                        token_type = "NOTE_OFF"
+                    elif token.startswith("VELOCITY"):
+                        token_type = "VELOCITY"
+                    elif token.endswith("T"):
+                        token_type = "TIME"
+                    else:
+                        token_type = "OTHER"
+
+                    token_types[token_type] = token_types.get(token_type, 0) + 1
+
+            if token_types:
+                st.write("### Token Type Distribution")
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.bar(token_types.keys(), token_types.values())
+                ax.set_xlabel("Token Type")
+                ax.set_ylabel("Count")
+                ax.set_title("Token Type Distribution")
+                plt.xticks(rotation=45, ha="right")
+                plt.tight_layout()
+                st.pyplot(fig)
+
+            # Convert all token IDs to tokens
+            tokens = []
+            for token_id in input_ids:
+                if token_id < len(tokenizer.vocab):
+                    tokens.append(tokenizer.vocab[token_id])
+                else:
+                    tokens.append(f"<Unknown Token: {token_id}>")
+
+            # Try to untokenize
             untokenized_df = tokenizer.untokenize(tokens)
             if not untokenized_df.empty:
                 st.write("### Untokenized Notes")

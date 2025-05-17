@@ -20,8 +20,8 @@ class MidiDatasetConfig(BuilderConfig):
         name: str = "default",
         version: str = "1.0.0",
         train_dataset_paths: List[str] = None,
-        validation_dataset_path: str = "epr-labs-maestro-sustain-v2",
-        num_proc: int = 128,
+        validation_dataset_path: str = "epr-labs/maestro-sustain-v2",
+        num_proc: int = 32,
         description: str = "Aggregated MIDI dataset",
     ):
         self.name = name
