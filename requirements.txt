@@ -1,5 +1,10 @@
+accelerate==1.7.0
 datasets==3.6.0
 git+https://github.com/Nospoko/midi-tokenizers.git
+hydra_core==1.3.2
 setuptools==80.7.1
 streamlit==1.45.1
 streamlit_pianoroll==0.7.1
+torch==2.7.0
+transformers==4.51.3
+wandb==0.19.11

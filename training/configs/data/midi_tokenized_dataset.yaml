@@ -1,0 +1,6 @@
+dataset_path: "./datasets/MidiTokenizedDataset"
+train_split: "train"
+eval_split: "validation"
+load_from_disk: true
+max_seq_length: 128
+sliding_window_stride: 32
