@@ -65,11 +65,11 @@ class MidiDataCollatorForCausalLM:
         # Fill in the tensors with actual values
         for i, ids in enumerate(input_ids):
             length = len(ids)
-            padded_input_ids[i, :length] = torch.tensor(ids, dtype=torch.long)
+            padded_input_ids[i, :length] = ids.detach().clone()
             attention_mask[i, :length] = 1
 
         # For causal LM, labels are the same as inputs but shifted to the left by one
-        labels = padded_input_ids.clone()
+        labels = padded_input_ids.detach().clone()
         labels = torch.roll(labels, shifts=-1, dims=1)
 
         # Set the last position (which has no valid prediction target) to -100
