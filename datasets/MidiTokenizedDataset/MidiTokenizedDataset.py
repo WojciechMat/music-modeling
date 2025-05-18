@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple, Iterator, Optional
 
 import pandas as pd
 from datasets.info import DatasetInfo
+from hydra.utils import to_absolute_path
 from midi_tokenizers import ExponentialTimeTokenizer
 from datasets.features import Value, Features, Sequence
 from datasets.download.download_manager import DownloadManager
@@ -21,7 +22,7 @@ class MidiTokenizedDatasetConfig(BuilderConfig):
         self,
         name: str = "default",
         version: str = "1.0.0",
-        aggregated_dataset_path: str = "./datasets/MidiDataset",
+        aggregated_dataset_path: str = to_absolute_path("./datasets/MidiDataset"),
         context_length: int = 1024,
         min_time_unit: float = 0.01,
         max_time_step: float = 1.0,
@@ -106,7 +107,9 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
                 sliding_window_stride=sliding_window_stride,
                 num_proc=num_proc,
             )
-            super().__init__(config=config, **kwargs)
+            super().__init__(**kwargs)
+            self.config = config
+
         else:
             super().__init__(**kwargs)
 
@@ -298,10 +301,6 @@ class MidiTokenizedDataset(GeneratorBasedBuilder):
                         }
 
                         example_counter += 1
-
-                        # Log progress occasionally
-                        if example_counter % 1000 == 0:
-                            logger.info(f"Processed {example_counter} examples")
 
                 except Exception as e:
                     logger.error(f"Error processing example {example_id} in shard {shard_id}: {e}")

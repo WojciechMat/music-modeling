@@ -1,0 +1,21 @@
+defaults:
+  - tokenizer: default
+  - data: midi_tokenized_dataset
+  - training: prod
+  - model: tiny
+
+
+project_name: "musical-transformer"
+experiment_name: "midi-model-tiny"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  logging_steps: 50
+  use_wandb: true
+
+# Weights & Biases configuration
+wandb:
+  project: "${project_name}"
+  run_name: "${experiment_name}"
+  tags: ["midi", "music", "transformer"]
