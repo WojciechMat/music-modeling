@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 import hydra
 import torch
 import wandb
+from dotenv import load_dotenv
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from torch.utils.data import DataLoader
@@ -18,6 +19,9 @@ from transformers import AutoConfig, PreTrainedModel, AutoModelForCausalLM, get_
 
 from datasets import load_dataset
 from training.midi_data_collator import MidiDataCollatorForCausalLM
+
+load_dotenv()
+
 
 logger = get_logger(__name__)
 

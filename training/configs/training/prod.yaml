@@ -10,9 +10,9 @@ adam_epsilon: 1e-8
 max_gradient_norm: 1.0
 lr_scheduler_type: "cosine"  # linear, cosine, cosine_with_restarts, polynomial, constant, constant_with_warmup
 warmup_steps: 100
-eval_steps: 500
+eval_steps: 5000
 save_steps: 1000
 seed: 42
 mixed_precision: "no"  # no, fp16, bf16
 drop_last: true
-debug_mode: false  # Set to true for quicker debugging with smaller dataset
+debug_mode: false
