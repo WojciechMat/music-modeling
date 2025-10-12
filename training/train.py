@@ -133,23 +133,23 @@ def load_and_prepare_dataset(
 
 
 def create_model(
-    config: DictConfig,
+    cfg: DictConfig,
     vocab_size: int,
 ) -> PreTrainedModel:
     """Create a model based on the specified configuration."""
 
-    if config.model.base_model_type == "custom_transformer":
+    if cfg.model.base_model_type == "custom_transformer":
         # Create a custom transformer configuration
         model_config = AutoConfig.from_pretrained(
-            config.model.config_name or "gpt2",
+            cfg.model.config_name or "gpt2",
             vocab_size=vocab_size,
-            n_positions=config.model.max_position_embeddings,
-            n_ctx=config.model.max_position_embeddings,
-            n_embd=config.model.hidden_size,
-            n_layer=config.model.num_hidden_layers,
-            n_head=config.model.num_attention_heads,
-            resid_pdrop=config.model.hidden_dropout_prob,
-            attn_pdrop=config.model.attention_probs_dropout_prob,
+            n_positions=cfg.model.max_position_embeddings,
+            n_ctx=cfg.model.max_position_embeddings,
+            n_embd=cfg.model.hidden_size,
+            n_layer=cfg.model.num_hidden_layers,
+            n_head=cfg.model.num_attention_heads,
+            resid_pdrop=cfg.model.hidden_dropout_prob,
+            attn_pdrop=cfg.model.attention_probs_dropout_prob,
             bos_token_id=0,  # Adjust if needed
             eos_token_id=1,  # Adjust if needed
         )
@@ -159,18 +159,18 @@ def create_model(
             model_config,
         )
 
-    elif config.model.base_model_type == "gemma":
+    elif cfg.model.base_model_type == "gemma":
         # Load Gemma configuration but with custom parameters
         model_config = AutoConfig.from_pretrained(
             "google/gemma-2b",
             vocab_size=vocab_size,
-            hidden_size=config.model.hidden_size,
-            num_hidden_layers=config.model.num_hidden_layers,
-            num_attention_heads=config.model.num_attention_heads,
-            intermediate_size=config.model.intermediate_size or config.model.hidden_size * 4,
-            max_position_embeddings=config.model.max_position_embeddings,
-            hidden_dropout_prob=config.model.hidden_dropout_prob,
-            attention_probs_dropout_prob=config.model.attention_probs_dropout_prob,
+            hidden_size=cfg.model.hidden_size,
+            num_hidden_layers=cfg.model.num_hidden_layers,
+            num_attention_heads=cfg.model.num_attention_heads,
+            intermediate_size=cfg.model.intermediate_size or cfg.model.hidden_size * 4,
+            max_position_embeddings=cfg.model.max_position_embeddings,
+            hidden_dropout_prob=cfg.model.hidden_dropout_prob,
+            attention_probs_dropout_prob=cfg.model.attention_probs_dropout_prob,
         )
 
         # Initialize a new model
@@ -181,13 +181,13 @@ def create_model(
     else:
         # Load any other model architecture
         model_config = AutoConfig.from_pretrained(
-            config.model.config_name,
+            cfg.model.config_name,
             vocab_size=vocab_size,
-            n_positions=config.model.max_position_embeddings,
-            n_ctx=config.model.max_position_embeddings,
-            n_embd=config.model.hidden_size,
-            n_layer=config.model.num_hidden_layers,
-            n_head=config.model.num_attention_heads,
+            n_positions=cfg.model.max_position_embeddings,
+            n_ctx=cfg.model.max_position_embeddings,
+            n_embd=cfg.model.hidden_size,
+            n_layer=cfg.model.num_hidden_layers,
+            n_head=cfg.model.num_attention_heads,
         )
 
         model = AutoModelForCausalLM.from_config(
@@ -225,55 +225,55 @@ def get_grouped_params(
 
 
 def train(
-    config: DictConfig,
+    cfg: DictConfig,
 ) -> None:
     """Main training function."""
 
     # Setup
     set_seed(
-        config.training.seed,
+        cfg.training.seed,
     )
     setup_logging(
-        config.logging.level,
+        cfg.logging.level,
     )
 
     # Initialize accelerator
     accelerator = Accelerator(
-        gradient_accumulation_steps=config.training.gradient_accumulation_steps,
-        mixed_precision=config.training.mixed_precision,
-        log_with="wandb" if config.logging.use_wandb else None,
+        gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
+        mixed_precision=cfg.training.mixed_precision,
+        log_with="wandb" if cfg.logging.use_wandb else None,
     )
 
     logger.info(f"Distributed training: {accelerator.distributed_type}")
     logger.info(f"Mixed precision: {accelerator.mixed_precision}")
 
     # Initialize W&B if requested
-    if config.logging.use_wandb and accelerator.is_main_process:
+    if cfg.logging.use_wandb and accelerator.is_main_process:
         wandb.init(
-            project=config.wandb.project,
-            name=config.wandb.run_name,
-            config=OmegaConf.to_container(config, resolve=True),
+            project=cfg.wandb.project,
+            name=cfg.wandb.run_name,
+            config=OmegaConf.to_container(cfg, resolve=True),
         )
 
     tokenizer = create_tokenizer(
-        config,
+        cfg,
     )
 
     model = create_model(
-        config,
+        cfg,
         len(tokenizer.vocab),
     )
 
     train_dataloader, eval_dataloader = load_and_prepare_dataset(
-        config,
+        cfg,
         tokenizer,
     )
 
     optimizer = torch.optim.AdamW(
-        get_grouped_params(model, config.training.weight_decay),
-        lr=config.training.learning_rate,
-        betas=(config.training.adam_beta1, config.training.adam_beta2),
-        eps=config.training.adam_epsilon,
+        get_grouped_params(model, cfg.training.weight_decay),
+        lr=cfg.training.learning_rate,
+        betas=(cfg.training.adam_beta1, cfg.training.adam_beta2),
+        eps=cfg.training.adam_epsilon,
     )
 
     # Prepare everything with accelerator for training
@@ -285,29 +285,40 @@ def train(
     )
 
     # Initialize learning rate scheduler
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / config.training.gradient_accumulation_steps)
-    max_train_steps = config.training.num_train_epochs * num_update_steps_per_epoch
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.training.gradient_accumulation_steps)
+    max_train_steps = cfg.training.num_train_epochs * num_update_steps_per_epoch
 
     lr_scheduler = get_scheduler(
-        name=config.training.lr_scheduler_type,
+        name=cfg.training.lr_scheduler_type,
         optimizer=optimizer,
-        num_warmup_steps=config.training.warmup_steps,
+        num_warmup_steps=cfg.training.warmup_steps,
         num_training_steps=max_train_steps,
     )
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataloader.dataset)}")
     logger.info(f"  Num eval examples = {len(eval_dataloader.dataset)}")
-    logger.info(f"  Num Epochs = {config.training.num_train_epochs}")
-    logger.info(f"  Per device batch size = {config.training.per_device_train_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {config.training.gradient_accumulation_steps}")
+    logger.info(f"  Num Epochs = {cfg.training.num_train_epochs}")
+    logger.info(f"  Per device batch size = {cfg.training.per_device_train_batch_size}")
+    logger.info(f"  Gradient Accumulation steps = {cfg.training.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {max_train_steps}")
 
     completed_steps = 0
     best_eval_loss = float("inf")
 
+    os.makedirs(to_absolute_path(cfg.model.output_dir), exist_ok=True)
+    with open(
+        os.path.join(to_absolute_path(cfg.model.output_dir), "train_config.json"),
+        "w",
+    ) as f:
+        json.dump(
+            OmegaConf.to_object(cfg=cfg),
+            f,
+            indent=4,
+        )
+
     # Training loop
-    for epoch in range(config.training.num_train_epochs):
+    for epoch in range(cfg.training.num_train_epochs):
         model.train()
         train_loss = 0.0
 
@@ -321,24 +332,23 @@ def train(
                 train_loss += loss.detach().float()
 
                 # Clip gradients
-                if config.training.max_gradient_norm > 0:
+                if cfg.training.max_gradient_norm > 0:
                     accelerator.clip_grad_norm_(
                         model.parameters(),
-                        config.training.max_gradient_norm,
+                        cfg.training.max_gradient_norm,
                     )
 
                 optimizer.step()
-                lr_scheduler.step()
                 optimizer.zero_grad()
 
             # Log and evaluate
-            if step % config.logging.logging_steps == 0 and step > 0:
-                avg_loss = accelerator.gather(train_loss).mean().item() / config.logging.logging_steps
+            if step % cfg.logging.logging_steps == 0 and step > 0:
+                avg_loss = accelerator.gather(train_loss).mean().item() / cfg.logging.logging_steps
                 train_loss = 0.0
 
                 logger.info(f"Epoch: {epoch}, Step: {step}, Loss: {avg_loss: .4f}")
 
-                if config.logging.use_wandb and accelerator.is_main_process:
+                if cfg.logging.use_wandb and accelerator.is_main_process:
                     wandb.log(
                         {
                             "train/loss": avg_loss,
@@ -349,7 +359,7 @@ def train(
                     )
 
             # Evaluate
-            if step % config.training.eval_steps == 0 and step > 0:
+            if step % cfg.training.eval_steps == 0 and step > 0:
                 model.eval()
                 eval_loss = 0.0
 
@@ -364,7 +374,7 @@ def train(
 
                 logger.info(f"Epoch: {epoch}, Step: {step}, Eval Loss: {eval_loss: .4f}, Perplexity: {perplexity: .2f}")
 
-                if config.logging.use_wandb and accelerator.is_main_process:
+                if cfg.logging.use_wandb and accelerator.is_main_process:
                     wandb.log(
                         {
                             "eval/loss": eval_loss,
@@ -382,13 +392,16 @@ def train(
                         accelerator.wait_for_everyone()
                         unwrapped_model = accelerator.unwrap_model(model)
 
-                        os.makedirs(config.model.output_dir, exist_ok=True)
+                        os.makedirs(to_absolute_path(cfg.model.output_dir), exist_ok=True)
                         unwrapped_model.save_pretrained(
-                            config.model.output_dir,
+                            cfg.model.output_dir,
                             save_function=accelerator.save,
                             is_main_process=accelerator.is_main_process,
                         )
-                        with open(os.path.join(config.model.output_dir, "tokenizer.json"), "w") as f:
+                        with open(
+                            os.path.join(to_absolute_path(cfg.model.output_dir), "tokenizer.json"),
+                            "w",
+                        ) as f:
                             json.dump(
                                 tokenizer.to_dict(),
                                 f,
@@ -397,7 +410,9 @@ def train(
 
                 model.train()
 
-            completed_steps += 1
+            if accelerator.sync_gradients:
+                completed_steps += 1
+                lr_scheduler.step()
 
             # Stop if we reach max steps
             if completed_steps >= max_train_steps:
@@ -410,7 +425,7 @@ def train(
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
 
-            epoch_output_dir = os.path.join(config.model.output_dir, f"epoch_{epoch}")
+            epoch_output_dir = os.path.join(to_absolute_path(cfg.model.output_dir), f"epoch_{epoch}")
             os.makedirs(epoch_output_dir, exist_ok=True)
             unwrapped_model.save_pretrained(
                 epoch_output_dir,
@@ -430,7 +445,7 @@ def train(
     unwrapped_model = accelerator.unwrap_model(model)
 
     if accelerator.is_main_process:
-        final_output_dir = os.path.join(config.model.output_dir, "final")
+        final_output_dir = os.path.join(to_absolute_path(cfg.model.output_dir), "final")
         os.makedirs(final_output_dir, exist_ok=True)
         unwrapped_model.save_pretrained(
             final_output_dir,
@@ -446,7 +461,7 @@ def train(
 
         logger.info(f"Model saved to {final_output_dir}")
 
-    if config.logging.use_wandb and accelerator.is_main_process:
+    if cfg.logging.use_wandb and accelerator.is_main_process:
         wandb.finish()
 
 

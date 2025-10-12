@@ -6,7 +6,8 @@ defaults:
 
 
 project_name: "musical-transformer"
-experiment_name: "midi-model-tiny"
+run_prefix: "midi-model-tiny"
+experiment_name: "${run_prefix}-${now:%Y-%m-%d-%H-%M-%S}"
 
 # Logging configuration
 logging:
