@@ -33,7 +33,10 @@ class MidiDataCollatorForCausalLM:
                 self.pad_token_id = 0
                 print("Warning: No pad_token_id found, using 0 as pad_token_id")
 
-    def __call__(self, examples: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+    def __call__(
+        self,
+        examples: List[Dict[str, torch.Tensor]],
+    ) -> Dict[str, torch.Tensor]:
         """
         Collate a batch of examples for causal language modeling.
 
@@ -55,12 +58,21 @@ class MidiDataCollatorForCausalLM:
 
         # If pad_to_multiple_of is set, round up max_length
         if self.pad_to_multiple_of is not None:
-            max_length = (max_length + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of * self.pad_to_multiple_of
+            a = max_length + self.pad_to_multiple_of - 1
+            k_2 = self.pad_to_multiple_of * self.pad_to_multiple_of
+            max_length = a // k_2
 
         # Create padded tensors
-        padded_input_ids = torch.full((batch_size, max_length), self.pad_token_id, dtype=torch.long)
+        padded_input_ids = torch.full(
+            (batch_size, max_length),
+            self.pad_token_id,
+            dtype=torch.long,
+        )
 
-        attention_mask = torch.zeros((batch_size, max_length), dtype=torch.long)
+        attention_mask = torch.zeros(
+            (batch_size, max_length),
+            dtype=torch.long,
+        )
 
         # Fill in the tensors with actual values
         for i, ids in enumerate(input_ids):
@@ -79,7 +91,6 @@ class MidiDataCollatorForCausalLM:
         mask = attention_mask == 0
         labels[mask] = -100
 
-        # Create the batch
         batch = {
             "input_ids": padded_input_ids,
             "attention_mask": attention_mask,
