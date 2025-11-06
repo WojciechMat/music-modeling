@@ -2,7 +2,7 @@ import os
 import json
 import math
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Tuple
 
 import hydra
 import torch
@@ -29,7 +29,6 @@ logger = get_logger(__name__)
 def setup_logging(
     log_level: str = "INFO",
 ) -> None:
-    """Set up basic logging configuration."""
     logging.basicConfig(
         level=getattr(logging, log_level),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -141,7 +140,7 @@ def create_model(
     if cfg.model.base_model_type == "custom_transformer":
         # Create a custom transformer configuration
         model_config = AutoConfig.from_pretrained(
-            cfg.model.config_name or "gpt2",
+            cfg.model.config_name,
             vocab_size=vocab_size,
             n_positions=cfg.model.max_position_embeddings,
             n_ctx=cfg.model.max_position_embeddings,
@@ -150,8 +149,8 @@ def create_model(
             n_head=cfg.model.num_attention_heads,
             resid_pdrop=cfg.model.hidden_dropout_prob,
             attn_pdrop=cfg.model.attention_probs_dropout_prob,
-            bos_token_id=0,  # Adjust if needed
-            eos_token_id=1,  # Adjust if needed
+            bos_token_id=0,
+            eos_token_id=1,
         )
 
         # Initialize a new model
@@ -201,29 +200,6 @@ def create_model(
     return model
 
 
-def get_grouped_params(
-    model: PreTrainedModel,
-    weight_decay: float,
-) -> List[Dict[str, Any]]:
-    """
-    Get parameters grouped for optimization with different weight decay values.
-    """
-    no_decay = ["bias", "LayerNorm.weight"]
-
-    optimizer_grouped_parameters = [
-        {
-            "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": weight_decay,
-        },
-        {
-            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-
-    return optimizer_grouped_parameters
-
-
 def train(
     cfg: DictConfig,
 ) -> None:
@@ -270,10 +246,11 @@ def train(
     )
 
     optimizer = torch.optim.AdamW(
-        get_grouped_params(model, cfg.training.weight_decay),
+        model.parameters(),
         lr=cfg.training.learning_rate,
         betas=(cfg.training.adam_beta1, cfg.training.adam_beta2),
         eps=cfg.training.adam_epsilon,
+        weight_decay=0.0,
     )
 
     # Prepare everything with accelerator for training

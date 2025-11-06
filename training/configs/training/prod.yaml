@@ -3,7 +3,6 @@ per_device_eval_batch_size: 8
 gradient_accumulation_steps: 4
 num_train_epochs: 3
 learning_rate: 5e-4
-weight_decay: 0.01
 adam_beta1: 0.9
 adam_beta2: 0.999
 adam_epsilon: 1e-8
