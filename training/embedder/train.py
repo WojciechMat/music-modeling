@@ -101,14 +101,16 @@ def embed_echo(
     attention_mask: torch.Tensor,
     echo_repetitions: int,
 ) -> torch.Tensor:
-    """ECHO: input repeated echo_repetitions times. Forward, last-rep token encodings, mean-pool -> (batch, hidden)."""
+    """ECHO: input repeated echo_repetitions times. Forward, last-rep token encodings, mean-pool -> (batch, hidden).
+    Padding is excluded via attention_mask in mean_pool_hidden.
+    """
     outputs = model(
         input_ids=input_ids,
         attention_mask=attention_mask,
         output_hidden_states=True,
     )
     last_hidden = outputs.hidden_states[-1]
-    seq_len = last_hidden.size(1)
+    seq_len = input_ids.size(1)
     segment_len = seq_len // echo_repetitions
     if segment_len == 0:
         segment_len = seq_len
@@ -556,6 +558,18 @@ def train(
                                 f,
                                 indent=4,
                             )
+                        with open(
+                            os.path.join(
+                                best_dir,
+                                "embedding_config.json",
+                            ),
+                            "w",
+                        ) as f:
+                            json.dump(
+                                {"echo_repetitions": echo_repetitions},
+                                f,
+                                indent=2,
+                            )
                 model.train()
 
             if accelerator.sync_gradients:
@@ -590,6 +604,18 @@ def train(
                 tokenizer.to_dict(),
                 f,
                 indent=4,
+            )
+        with open(
+            os.path.join(
+                final_dir,
+                "embedding_config.json",
+            ),
+            "w",
+        ) as f:
+            json.dump(
+                {"echo_repetitions": echo_repetitions},
+                f,
+                indent=2,
             )
         logger.info(
             f"Model saved to {final_dir}",

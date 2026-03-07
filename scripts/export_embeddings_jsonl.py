@@ -1,8 +1,10 @@
 """
 Export embeddings for test split of embedding-pairs dataset.
-Reads notes_first, runs embedder model, writes tmp/data/<dataset_hash>/<model_name>/split_with_embeddings.jsonl.
+Uses ECHO (repeat notes_first segment echo_repetitions times, forward, pool last repetition).
+Writes tmp/data/<dataset_hash>/<model_name>/split_with_embeddings.jsonl.
 
 Run from project root: python -m scripts.export_embeddings_jsonl <dataset_path> <model_path>
+Requires embedding_config.json in the model dir (written by embedder training).
 """
 
 import json
@@ -16,7 +18,7 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM
 from midi_tokenizers import ExponentialTimeTokenizer
 
-from training.embedder.echo_dataset import notes_to_token_ids
+from training.embedder.echo_dataset import notes_to_token_ids, build_echo_input_ids
 
 
 def load_tokenizer_from_pretrained(
@@ -43,39 +45,29 @@ def load_tokenizer_from_pretrained(
     )
 
 
-def tokenize_notes_first(
+def build_echo_ids(
     notes_str: str,
     tokenizer: ExponentialTimeTokenizer,
     max_seq_length: int,
+    echo_repetitions: int,
 ) -> list[int]:
-    segment_ids = notes_to_token_ids(
-        notes_str,
-        tokenizer,
-    )
+    """Tokenize notes_first and build ECHO input (segment repeated echo_repetitions times)."""
+    segment_ids = notes_to_token_ids(notes_str, tokenizer)
     if not segment_ids:
         return []
-    return segment_ids[:max_seq_length]
+    echoed, _ = build_echo_input_ids(segment_ids, echo_repetitions, max_seq_length)
+    return echoed
 
 
-def mean_pool_last_hidden(
+def mean_pool_hidden(
     last_hidden_state: torch.Tensor,
     attention_mask: torch.Tensor,
 ) -> torch.Tensor:
-    """Last layer hidden states, mean-pool over seq. Comparable to pairwise embedder."""
-    mask = attention_mask.unsqueeze(
-        -1,
-    ).float()
-    sum_hidden = (last_hidden_state * mask).sum(
-        dim=1,
-    )
-    sum_mask = mask.sum(
-        dim=1,
-    ).clamp(
-        min=1e-9,
-    )
-    return (sum_hidden / sum_mask).squeeze(
-        0,
-    )
+    """(batch, seq, hidden) -> (batch, hidden) using attention_mask."""
+    mask = attention_mask.unsqueeze(-1).float()
+    sum_hidden = (last_hidden_state * mask).sum(dim=1)
+    sum_mask = mask.sum(dim=1).clamp(min=1e-9)
+    return sum_hidden / sum_mask
 
 
 def run(
@@ -106,6 +98,19 @@ def run(
         raise FileNotFoundError(
             f"Model checkpoint not found: {model_path}",
         )
+
+    embedding_config_path = model_path / "embedding_config.json"
+    if not embedding_config_path.exists():
+        raise FileNotFoundError(
+            f"embedding_config.json not found inside {model_path}. Train embedder first (it writes this file).",
+        )
+    with open(embedding_config_path) as f:
+        emb_cfg = json.load(f)
+    if "echo_repetitions" not in emb_cfg:
+        raise ValueError(
+            f"embedding_config.json must contain 'echo_repetitions'. Got keys: {list(emb_cfg)}",
+        )
+    echo_repetitions = int(emb_cfg["echo_repetitions"])
 
     dataset_hash = dataset_path.name
     model_name = model_path.name
@@ -144,8 +149,8 @@ def run(
     num_examples = len(ds)
     num_batches = (num_examples + batch_size - 1) // batch_size
     print(
-        f"Exporting embeddings: split={split}, examples={num_examples}, batch_size={batch_size}, "
-        f"batches={num_batches}, model={model_path.name}, out={out_path}",
+        f"Exporting embeddings: split={split}, examples={num_examples}, echo_repetitions={echo_repetitions}, "
+        f"batch_size={batch_size}, batches={num_batches}, model={model_path.name}, out={out_path}",
     )
     pad_token_id = (
         getattr(
@@ -156,16 +161,12 @@ def run(
         or 0
     )
 
-    def get_input_ids(
-        example: dict,
-    ) -> list[int]:
-        return tokenize_notes_first(
-            example.get(
-                "notes_first",
-                "",
-            ),
+    def get_input_ids(example: dict) -> list[int]:
+        return build_echo_ids(
+            example.get("notes_first", ""),
             tokenizer,
             max_seq_length,
+            echo_repetitions,
         )
 
     all_rows = []
@@ -289,48 +290,30 @@ def run(
                 output_hidden_states=True,
             )
         last_hidden = out.hidden_states[-1]
-        for idx in range(
-            len(
-                batch_examples,
-            ),
-        ):
+        seq_len = input_ids_t.size(1)
+        segment_len = seq_len // echo_repetitions
+        if segment_len == 0:
+            segment_len = seq_len
+        last_rep_hidden = last_hidden[:, -segment_len:, :]
+        last_rep_mask = attention_mask[:, -segment_len:]
+        pooled = mean_pool_hidden(last_rep_hidden, last_rep_mask)
+        for idx in range(len(batch_examples)):
             ex = batch_examples[idx]
             row = {
                 "id": len(all_rows),
-                "notes_first": ex.get(
-                    "notes_first",
-                    "",
-                ),
-                "notes_second": ex.get(
-                    "notes_second",
-                    "",
-                ),
-                "source": ex.get(
-                    "source",
-                    "",
-                ),
-                "source_dataset": ex.get(
-                    "source_dataset",
-                    "",
-                ),
-                "original_id": ex.get(
-                    "original_id",
-                    "",
-                ),
+                "notes_first": ex.get("notes_first", ""),
+                "notes_second": ex.get("notes_second", ""),
+                "source": ex.get("source", ""),
+                "source_dataset": ex.get("source_dataset", ""),
+                "original_id": ex.get("original_id", ""),
                 "embedding": None,
             }
             if input_ids_list[idx]:
-                emb = mean_pool_last_hidden(
-                    last_hidden[idx : idx + 1,],
-                    attention_mask[idx : idx + 1,],
-                )
-                emb_f = emb.float().cpu().tolist()
+                emb_f = pooled[idx].float().cpu().tolist()
                 row["embedding"] = emb_f
             else:
                 row["embedding"] = []
-            all_rows.append(
-                row,
-            )
+            all_rows.append(row)
 
     with open(
         out_path,
@@ -378,7 +361,7 @@ def main() -> None:
         "--max-seq-length",
         type=int,
         default=512,
-        help="Max sequence length for tokenized notes_first",
+        help="Max sequence length for ECHO input (repeated segment truncated to this)",
     )
     parser.add_argument(
         "--batch-size",
