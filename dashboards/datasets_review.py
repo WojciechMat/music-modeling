@@ -1,4 +1,6 @@
 import json
+import random
+from pathlib import Path
 from collections import Counter
 
 import pandas as pd
@@ -8,30 +10,66 @@ import streamlit_pianoroll
 import matplotlib.pyplot as plt
 from midi_tokenizers import ExponentialTimeTokenizer
 
-from datasets import load_dataset
+BROWSE_SEED = 4
+SAMPLES_PER_PAGE = 6
+
+# Load project dataset modules by path to avoid conflict with HuggingFace "datasets" package
+project_root = Path(__file__).resolve().parents[1]
+
+
+def _load_module(name: str, rel_path: str):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, project_root / rel_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_midi_dataset = _load_module("midi_dataset", "midi_datasets/MidiDataset/MidiDataset.py")
+_tokenized_dataset = _load_module(
+    "midi_tokenized_dataset", "midi_datasets/MidiTokenizedDataset/MidiTokenizedDataset.py"
+)
+load_midi_from_directory = _midi_dataset.load_from_directory
+load_tokenized_from_directory = _tokenized_dataset.load_from_directory
 
 st.set_page_config(page_title="MIDI Dataset Explorer", layout="wide")
 
 
 @st.cache_data
-def load_hf_dataset(
-    dataset_path,
-    split="train",
-    num_examples=1000,
+def load_dataset_from_directory(
+    dataset_path: str,
+    dataset_type: str,
+    split: str = "train",
+    num_examples: int = 1000,
 ):
-    """Load a dataset from Hugging Face."""
+    """Load from directory containing train.jsonl (and optionally validation/test). Resolves 'latest' symlink."""
     try:
-        dataset = load_dataset(
-            dataset_path,
-            split=split,
-            trust_remote_code=True,
-            num_proc=32,
-        )
+        path = Path(dataset_path).resolve()
+        if not path.is_dir():
+            st.error(f"Not a directory: {path}")
+            return None
+        if not (path / "train.jsonl").exists():
+            st.error(
+                f"No train.jsonl in {path}. Use a path like "
+                "midi_datasets/MidiDataset/latest or midi_datasets/MidiTokenizedDataset/latest."
+            )
+            return None
+        if dataset_type == "Aggregated Dataset":
+            ds_dict = load_midi_from_directory(str(path))
+        else:
+            ds_dict = load_tokenized_from_directory(str(path))
+        dataset = ds_dict.get(split)
+        if dataset is None:
+            dataset = ds_dict["train"]
         if len(dataset) > num_examples:
             dataset = dataset.select(range(num_examples))
         return dataset
+    except FileNotFoundError as e:
+        st.error(str(e))
+        return None
     except Exception as e:
-        st.error(f"Error loading dataset {dataset_path}: {e}")
+        st.error(f"Error loading dataset from {dataset_path}: {e}")
         return None
 
 
@@ -342,25 +380,106 @@ def visualize_tokenized_dataset(dataset, tokenizer=None):
             st.error(f"Error decoding tokens: {e}")
 
 
-def main():
+def _browse_indices(
+    dataset_len: int,
+    n: int,
+    seed: int,
+    shuffle_key: int,
+) -> list[int]:
+    """Return n random indices from [0, dataset_len) using seed + shuffle_key."""
+    rng = random.Random(seed + shuffle_key)
+    pool = list(range(dataset_len))
+    if len(pool) <= n:
+        return pool
+    return rng.sample(pool, n)
+
+
+def _render_aggregated_sample(
+    example: dict,
+    index: int,
+    tokenizer,
+) -> None:
+    """Render one aggregated sample: source, notes table, pianoroll, tokenization in expander."""
+    with st.expander(
+        f"Sample index {index} | source: {example.get('source_dataset', 'N/A')} "
+        f"| id: {example.get('original_id', index)}",
+        expanded=True,
+    ):
+        if "source" in example:
+            try:
+                st.json(json.loads(example["source"]))
+            except Exception:
+                st.text(example["source"][:200])
+        if "notes" not in example:
+            st.warning("No notes field.")
+            return
+        notes_df = parse_notes(example["notes"])
+        if notes_df.empty:
+            st.warning("No valid notes.")
+            return
+        st.dataframe(notes_df.head(20))
+        piece = ff.MidiPiece(notes_df)
+        streamlit_pianoroll.from_fortepyan(piece=piece)
+        st.write("Tokenization")
+        tokenize_and_visualize(notes_df, tokenizer)
+
+
+def _render_tokenized_sample(
+    example: dict,
+    index: int,
+    tokenizer,
+) -> None:
+    """Render one tokenized sample: metadata, token plot, optional untokenized pianoroll."""
+    with st.expander(
+        f"Sample index {index} | source: {example.get('source_dataset', 'N/A')} "
+        f"| id: {example.get('original_id', index)}",
+        expanded=True,
+    ):
+        st.caption(
+            f"Source: {example.get('source_dataset', 'N/A')} " f"| Original ID: {example.get('original_id', index)}"
+        )
+        input_ids = example.get("input_ids", [])
+        fig, ax = plt.subplots(figsize=(10, 2))
+        ax.plot(
+            range(len(input_ids)),
+            input_ids,
+            "-",
+            alpha=0.6,
+        )
+        ax.set_xlabel("Position")
+        ax.set_ylabel("Token ID")
+        st.pyplot(fig)
+        if tokenizer is not None:
+            try:
+                tokens = [tokenizer.vocab[tid] if tid < len(tokenizer.vocab) else f"<{tid}>" for tid in input_ids]
+                untokenized_df = tokenizer.untokenize(tokens)
+                if not untokenized_df.empty:
+                    piece = ff.MidiPiece(untokenized_df)
+                    streamlit_pianoroll.from_fortepyan(piece=piece)
+            except Exception as e:
+                st.caption(f"Untokenize failed: {e}")
+
+
+def main() -> None:
     st.title("MIDI Dataset Explorer")
 
-    # Sidebar for configuration
     st.sidebar.header("Dataset Configuration")
-
-    dataset_type = st.sidebar.radio("Dataset Type", ["Aggregated Dataset", "Tokenized Dataset"])
-
+    dataset_type = st.sidebar.radio(
+        "Dataset Type",
+        ["Aggregated Dataset", "Tokenized Dataset"],
+    )
     dataset_path = st.sidebar.text_input(
         "Dataset Path",
-        value="./datasets/MidiDataset" if dataset_type == "Aggregated Dataset" else "./datasets/MidiTokenizedDataset",
+        value="./midi_datasets/MidiDataset/latest"
+        if dataset_type == "Aggregated Dataset"
+        else "./midi_datasets/MidiTokenizedDataset/latest",
+        help="Directory with train.jsonl.",
     )
-
     dataset_split = st.sidebar.selectbox(
         "Dataset Split",
         ["train", "validation", "test"],
         index=0,
     )
-
     num_examples = st.sidebar.slider(
         "Max Examples to Load",
         min_value=10,
@@ -369,9 +488,7 @@ def main():
         step=10,
     )
 
-    # Tokenizer configuration in sidebar
     st.sidebar.header("Tokenizer Configuration")
-
     min_time_unit = st.sidebar.number_input(
         "Min Time Unit",
         min_value=0.001,
@@ -380,7 +497,6 @@ def main():
         step=0.001,
         format="%.3f",
     )
-
     max_time_step = st.sidebar.number_input(
         "Max Time Step",
         min_value=0.1,
@@ -389,7 +505,6 @@ def main():
         step=0.1,
         format="%.1f",
     )
-
     n_velocity_bins = st.sidebar.slider(
         "Velocity Bins",
         min_value=4,
@@ -397,7 +512,6 @@ def main():
         value=32,
         step=4,
     )
-
     n_special_ids = st.sidebar.slider(
         "Special IDs",
         min_value=0,
@@ -406,7 +520,6 @@ def main():
         step=128,
     )
 
-    # Create tokenizer
     tokenizer = create_tokenizer(
         min_time_unit=min_time_unit,
         max_time_step=max_time_step,
@@ -414,103 +527,94 @@ def main():
         n_special_ids=n_special_ids,
     )
 
-    # Load dataset
     with st.spinner("Loading dataset..."):
-        dataset = load_hf_dataset(
+        dataset = load_dataset_from_directory(
             dataset_path,
+            dataset_type,
             dataset_split,
             num_examples,
         )
 
     if dataset is None:
-        st.error(f"Failed to load dataset from {dataset_path}. Please check the path and try again.")
+        st.error(
+            f"Failed to load dataset from {dataset_path}. Please check the path and try again.",
+        )
         return
 
-    # Dataset overview
-    st.header("Dataset Overview")
+    # Main part: browse samples (multiple per page, random with seed 4)
+    st.header("Browse samples")
+    if "browse_shuffle" not in st.session_state:
+        st.session_state.browse_shuffle = 0
+    n_show = min(SAMPLES_PER_PAGE, len(dataset))
+    indices = _browse_indices(
+        len(dataset),
+        n_show,
+        BROWSE_SEED,
+        st.session_state.browse_shuffle,
+    )
+    if st.button("New random samples", key="new_samples"):
+        st.session_state.browse_shuffle += 1
+        st.rerun()
+    st.caption(f"Random seed {BROWSE_SEED} | showing {len(indices)} samples")
+
+    for idx in indices:
+        example = dataset[idx]
+        if dataset_type == "Aggregated Dataset":
+            _render_aggregated_sample(
+                example,
+                idx,
+                tokenizer,
+            )
+        else:
+            _render_tokenized_sample(
+                example,
+                idx,
+                tokenizer,
+            )
+
+    # Bottom: dataset overview and sample examples only
+    st.header("Dataset overview")
     st.write(f"Dataset: {dataset_path}")
     st.write(f"Split: {dataset_split}")
     st.write(f"Number of examples: {len(dataset)}")
 
-    # Dataset features
     with st.expander("Dataset Features"):
         st.json(dataset.features)
 
-    st.write("Sample Examples")
+    st.subheader("Samples from dataset")
     sample_size = min(5, len(dataset))
     sample_indices = list(range(sample_size))
     samples = dataset.select(sample_indices)
-
     for i, sample in enumerate(samples):
         with st.expander(f"Example {i}"):
-            st.json({k: (v[:100] + "..." if isinstance(v, str) and len(v) > 100 else v) for k, v in sample.items()})
+            st.json(
+                {k: (v[:100] + "..." if isinstance(v, str) and len(v) > 100 else v) for k, v in sample.items()},
+            )
 
-    if dataset_type == "Aggregated Dataset":
-        st.header("Aggregated Dataset Exploration")
-
-        example_idx = st.selectbox("Select example to explore", range(len(dataset)))
-        example = dataset[example_idx]
-
-        # Source information
-        st.write("### Source Information")
-        if "source" in example:
-            source_data = json.loads(example["source"])
-            st.json(source_data)
-
-        # Notes data
-        st.write("### Notes Data")
-        if "notes" in example:
-            notes_df = parse_notes(example["notes"])
-            if not notes_df.empty:
-                st.dataframe(notes_df)
-
-                # Visualize notes
-                st.write("### Notes Visualization")
-                piece = ff.MidiPiece(notes_df)
-                streamlit_pianoroll.from_fortepyan(piece=piece)
-
-                # Tokenize and visualize
-                st.write("### Tokenization")
-                tokenize_and_visualize(notes_df, tokenizer)
-            else:
-                st.warning("No valid notes data found.")
-        else:
-            st.warning("No notes field found in example.")
-
-    else:
-        st.header("Tokenized Dataset Exploration")
-        visualize_tokenized_dataset(dataset, tokenizer)
-
-        st.write("### Dataset Statistics")
-
-        # Calculate average sequence length
+    if dataset_type == "Tokenized Dataset":
+        st.subheader("Dataset statistics")
         seq_lengths = [len(ex["input_ids"]) for ex in dataset]
         avg_length = sum(seq_lengths) / len(seq_lengths)
-
-        st.write(f"Average sequence length: {avg_length: .2f}")
+        st.write(f"Average sequence length: {avg_length:.2f}")
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.hist(seq_lengths, bins=30)
         ax.set_xlabel("Sequence Length")
         ax.set_ylabel("Frequency")
         ax.set_title("Sequence Length Distribution")
         st.pyplot(fig)
-
-        # Source dataset distribution
         if "source_dataset" in dataset.features:
             source_counts = {}
             for ex in dataset:
-                source = ex["source_dataset"]
-                source_counts[source] = source_counts.get(source, 0) + 1
-
+                src = ex["source_dataset"]
+                source_counts[src] = source_counts.get(src, 0) + 1
             if source_counts:
-                st.write("### Source Dataset Distribution")
-                fig, ax = plt.subplots(figsize=(10, 5))
-                ax.bar(source_counts.keys(), source_counts.values())
-                ax.set_xlabel("Source Dataset")
-                ax.set_ylabel("Count")
+                fig2, ax2 = plt.subplots(figsize=(10, 5))
+                ax2.bar(source_counts.keys(), source_counts.values())
+                ax2.set_xlabel("Source Dataset")
+                ax2.set_ylabel("Count")
                 plt.xticks(rotation=45, ha="right")
                 plt.tight_layout()
-                st.pyplot(fig)
+                st.pyplot(fig2)
 
 
 if __name__ == "__main__":

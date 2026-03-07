@@ -1,0 +1,20 @@
+defaults:
+  - _self_
+  - tokenizer: default
+  - data: midi_tokenized_dataset
+  - training: prod
+  - model: tiny
+
+project_name: "musical-transformer"
+run_prefix: "midi-model-tiny"
+experiment_name: "${run_prefix}-${now:%Y-%m-%d-%H-%M-%S}"
+
+logging:
+  level: "INFO"
+  logging_steps: 50
+  use_wandb: true
+
+wandb:
+  project: "${project_name}"
+  run_name: "${experiment_name}"
+  tags: ["midi", "music", "transformer", "next_token_prediction"]

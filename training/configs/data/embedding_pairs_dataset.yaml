@@ -1,0 +1,10 @@
+dataset_path: "./midi_datasets/EmbeddingPairsDataset/latest"
+train_split: "train"
+eval_split: "validation"
+load_from_disk: true
+streaming: false
+streaming_buffer_size: 10000
+# Max total length of echoed sequence (segment repeated echo_repetitions times).
+max_seq_length: 512
+# Number of processes for dataset map/filter when building ECHO examples.
+num_proc: 8

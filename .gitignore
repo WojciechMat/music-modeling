@@ -8,3 +8,6 @@ checkpoints
 outputs
 *.DS_Store
 .env
+*.jsonl
+*manifest.json
+*latest
