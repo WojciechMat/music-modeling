@@ -264,6 +264,7 @@ def main() -> None:
             key=lambda x: -x[2],
         )
         nearest_10 = sims[:10]
+        least_10 = list(reversed(sims[-10:]))  # least similar first
 
     if emb:
         st.header("10 most similar (by embedding)")
@@ -273,13 +274,45 @@ def main() -> None:
         )
         if nearest_10:
             for rank, (i, rid, sim) in enumerate(nearest_10, 1):
-                st.sidebar.write(f"{rank}. id={rid} sim={sim:.4e}")
+                dist = 1.0 - sim
+                st.sidebar.write(f"{rank}. id={rid} dist={dist:.4e}")
             chosen_notes_first = row.get("notes_first", "")
             for rank, (i, rid, sim) in enumerate(nearest_10, 1):
                 r = data[i]
                 other_notes_first = r.get("notes_first", "")
+                dist = 1.0 - sim
                 st.divider()
-                st.subheader(f"Nearest #{rank} — id={rid} (sim={sim:.4e})")
+                st.subheader(f"Nearest #{rank} — id={rid} (dist={dist:.4e})")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write("**That sample's notes_first**")
+                    df_other = parse_notes(other_notes_first)
+                    if not df_other.empty:
+                        streamlit_pianoroll.from_fortepyan(piece=ff.MidiPiece(df_other))
+                    else:
+                        st.caption("empty")
+                with col_b:
+                    st.write("**Chosen notes_first + that notes_first**")
+                    render_concatenation(
+                        chosen_notes_first,
+                        other_notes_first,
+                        label="",
+                    )
+        else:
+            st.caption("No other samples with embeddings.")
+
+        st.header("10 least similar (by embedding)")
+        if least_10:
+            for rank, (i, rid, sim) in enumerate(least_10, 1):
+                dist = 1.0 - sim
+                st.sidebar.write(f"Least {rank}. id={rid} dist={dist:.4e}")
+            chosen_notes_first = row.get("notes_first", "")
+            for rank, (i, rid, sim) in enumerate(least_10, 1):
+                r = data[i]
+                other_notes_first = r.get("notes_first", "")
+                dist = 1.0 - sim
+                st.divider()
+                st.subheader(f"Least #{rank} — id={rid} (dist={dist:.4e})")
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.write("**That sample's notes_first**")
