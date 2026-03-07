@@ -1,0 +1,27 @@
+defaults:
+  - _self_
+  - tokenizer: default
+  - data: embedding_pairs_dataset
+  - training: embedder_prod
+  - model: tiny
+
+project_name: "note-embedder"
+run_prefix: "embedder-echo"
+experiment_name: "${run_prefix}-${now:%Y-%m-%d-%H-%M-%S}"
+
+# Path to a pretrained next-token-prediction checkpoint (required for embedder training).
+pretrained_model_path: null
+
+# ECHO: repeat input n times; pool last repetition to 1D embedding. Training: pairwise (notes_first, notes_second), loss = MSE(embed_first, embed_second).
+embedder:
+  echo_repetitions: 1
+
+logging:
+  level: "INFO"
+  logging_steps: 50
+  use_wandb: true
+
+wandb:
+  project: "${project_name}"
+  run_name: "${experiment_name}"
+  tags: ["midi", "embedder", "echo"]

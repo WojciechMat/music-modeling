@@ -2,18 +2,17 @@ per_device_train_batch_size: 8
 per_device_eval_batch_size: 8
 gradient_accumulation_steps: 4
 num_train_epochs: 3
-# When data.streaming=true, training runs for this many steps (no epoch boundary)
-max_steps: null  # set e.g. 50000 when using streaming
+max_steps: null
 learning_rate: 5e-4
 adam_beta1: 0.9
 adam_beta2: 0.999
 adam_epsilon: 1e-8
 max_gradient_norm: 1.0
-lr_scheduler_type: "cosine"  # linear, cosine, cosine_with_restarts, polynomial, constant, constant_with_warmup
+lr_scheduler_type: "cosine"
 warmup_steps: 100
 eval_steps: 5000
 save_steps: 1000
 seed: 42
-mixed_precision: "no"  # no, fp16, bf16
+mixed_precision: "no"
 drop_last: true
 debug_mode: false

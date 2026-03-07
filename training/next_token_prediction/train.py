@@ -2,12 +2,13 @@ import os
 import json
 import math
 import logging
+from pathlib import Path
 from typing import Tuple
 
 import hydra
 import torch
-import wandb
 from dotenv import load_dotenv
+from datasets import load_dataset
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 from torch.utils.data import DataLoader
@@ -17,8 +18,9 @@ from omegaconf import OmegaConf, DictConfig
 from midi_tokenizers import ExponentialTimeTokenizer
 from transformers import AutoConfig, PreTrainedModel, AutoModelForCausalLM, get_scheduler
 
-from datasets import load_dataset
-from training.midi_data_collator import MidiDataCollatorForCausalLM
+import wandb
+
+from .midi_data_collator import MidiDataCollatorForCausalLM
 
 load_dotenv()
 
@@ -38,18 +40,15 @@ def setup_logging(
 def create_tokenizer(
     config: DictConfig,
 ) -> ExponentialTimeTokenizer:
-    """Create and configure the MIDI tokenizer based on config."""
     tokenizer_config = {
         "time_unit": config.tokenizer.min_time_unit,
         "max_time_step": config.tokenizer.max_time_step,
         "n_velocity_bins": config.tokenizer.n_velocity_bins,
         "n_special_ids": config.tokenizer.n_special_ids,
     }
-
     tokenizer = ExponentialTimeTokenizer.build_tokenizer(
         tokenizer_config,
     )
-
     return tokenizer
 
 
@@ -57,56 +56,86 @@ def load_and_prepare_dataset(
     config: DictConfig,
     tokenizer: ExponentialTimeTokenizer,
 ) -> Tuple[DataLoader, DataLoader]:
-    """Load and prepare the dataset for training and evaluation."""
+    """Load train/eval from JSONL directory. When streaming=True, train is streamed; eval is always full."""
+    dataset_path = to_absolute_path(config.data.dataset_path)
+    path = Path(dataset_path)
 
-    dataset_config = {
-        "context_length": config.data.max_seq_length,
-        "min_time_unit": config.tokenizer.min_time_unit,
-        "max_time_step": config.tokenizer.max_time_step,
-        "n_velocity_bins": config.tokenizer.n_velocity_bins,
-        "n_special_ids": config.tokenizer.n_special_ids,
-        "sliding_window_stride": config.data.get("sliding_window_stride", None),
-        "aggregated_dataset_path": to_absolute_path(config.data.get("source_dataset_path", "./datasets/MidiDataset")),
-    }
-
-    # Load the dataset
-    if config.data.load_from_disk:
-        train_dataset = load_dataset(
-            to_absolute_path(config.data.dataset_path),
-            split=config.data.train_split,
-            trust_remote_code=True,
-            **dataset_config,
+    if not config.data.load_from_disk:
+        raise ValueError("config.data.load_from_disk must be True; load from JSONL directory.")
+    if not path.is_dir() or not (path / "train.jsonl").exists():
+        raise FileNotFoundError(
+            f"No train.jsonl in {dataset_path}. "
+            "Build with: python -m scripts.build_midi_tokenized_jsonl <MidiDataset_path>",
         )
-        eval_dataset = load_dataset(
-            to_absolute_path(config.data.dataset_path),
-            split=config.data.eval_split,
-            trust_remote_code=True,
-            **dataset_config,
+
+    data_files = {
+        "train": str(path / "train.jsonl"),
+    }
+    if (path / "validation.jsonl").exists():
+        data_files["validation"] = str(path / "validation.jsonl")
+    if (path / "test.jsonl").exists():
+        data_files["test"] = str(path / "test.jsonl")
+
+    streaming = config.data.get("streaming", False)
+    train_split = config.data.train_split
+    eval_split = config.data.eval_split
+
+    if streaming:
+        train_dataset = load_dataset(
+            "json",
+            data_files=data_files,
+            split=train_split,
+            streaming=True,
+        )
+        buffer_size = config.data.get("streaming_buffer_size", 10_000)
+        train_dataset = train_dataset.shuffle(
+            seed=config.training.get("seed", 42),
+            buffer_size=buffer_size,
+        )
+        if config.training.get("debug_mode", False):
+            train_dataset = train_dataset.take(500)
+        if eval_split in data_files:
+            eval_dataset = load_dataset(
+                "json",
+                data_files=data_files,
+                split=eval_split,
+            )
+        else:
+            train_full = load_dataset(
+                "json",
+                data_files=data_files,
+                split="train",
+            )
+            eval_dataset = train_full.select(
+                range(min(100, len(train_full))),
+            )
+        eval_dataset.set_format(
+            type="torch",
+            columns=["input_ids"],
         )
     else:
-        # TODO: Implement other dataset loading methods if needed
-        pass
-
-    # For subset testing during development
-    if config.training.debug_mode:
-        train_dataset = train_dataset.select(
-            range(min(500, len(train_dataset))),
+        ds_dict = load_dataset(
+            "json",
+            data_files=data_files,
         )
-        eval_dataset = eval_dataset.select(
-            range(min(100, len(eval_dataset))),
+        train_dataset = ds_dict[train_split]
+        eval_dataset = ds_dict[eval_split]
+        if config.training.get("debug_mode", False):
+            train_dataset = train_dataset.select(
+                range(min(500, len(train_dataset))),
+            )
+            eval_dataset = eval_dataset.select(
+                range(min(100, len(eval_dataset))),
+            )
+        train_dataset.set_format(
+            type="torch",
+            columns=["input_ids"],
+        )
+        eval_dataset.set_format(
+            type="torch",
+            columns=["input_ids"],
         )
 
-    # Set the format to PyTorch tensors
-    train_dataset.set_format(
-        type="torch",
-        columns=["input_ids"],
-    )
-    eval_dataset.set_format(
-        type="torch",
-        columns=["input_ids"],
-    )
-
-    # Create dataloaders
     data_collator = MidiDataCollatorForCausalLM(
         tokenizer=tokenizer,
         mlm=False,
@@ -117,17 +146,15 @@ def load_and_prepare_dataset(
         train_dataset,
         batch_size=config.training.per_device_train_batch_size,
         collate_fn=data_collator,
-        shuffle=True,
+        shuffle=not streaming,
         drop_last=config.training.drop_last,
     )
-
     eval_dataloader = DataLoader(
         eval_dataset,
         batch_size=config.training.per_device_eval_batch_size,
         collate_fn=data_collator,
         shuffle=False,
     )
-
     return train_dataloader, eval_dataloader
 
 
@@ -135,10 +162,7 @@ def create_model(
     cfg: DictConfig,
     vocab_size: int,
 ) -> PreTrainedModel:
-    """Create a model based on the specified configuration."""
-
     if cfg.model.base_model_type == "custom_transformer":
-        # Create a custom transformer configuration
         model_config = AutoConfig.from_pretrained(
             cfg.model.config_name,
             vocab_size=vocab_size,
@@ -152,14 +176,10 @@ def create_model(
             bos_token_id=0,
             eos_token_id=1,
         )
-
-        # Initialize a new model
         model = AutoModelForCausalLM.from_config(
             model_config,
         )
-
     elif cfg.model.base_model_type == "gemma":
-        # Load Gemma configuration but with custom parameters
         model_config = AutoConfig.from_pretrained(
             "google/gemma-2b",
             vocab_size=vocab_size,
@@ -171,14 +191,10 @@ def create_model(
             hidden_dropout_prob=cfg.model.hidden_dropout_prob,
             attention_probs_dropout_prob=cfg.model.attention_probs_dropout_prob,
         )
-
-        # Initialize a new model
         model = AutoModelForCausalLM.from_config(
             model_config,
         )
-
     else:
-        # Load any other model architecture
         model_config = AutoConfig.from_pretrained(
             cfg.model.config_name,
             vocab_size=vocab_size,
@@ -188,24 +204,20 @@ def create_model(
             n_layer=cfg.model.num_hidden_layers,
             n_head=cfg.model.num_attention_heads,
         )
-
         model = AutoModelForCausalLM.from_config(
             model_config,
         )
 
-    # Log model size
     model_size = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model created with {model_size/1_000_000: .2f}M parameters")
-
+    logger.info(
+        f"Model created with {model_size/1_000_000: .2f}M parameters",
+    )
     return model
 
 
 def train(
     cfg: DictConfig,
 ) -> None:
-    """Main training function."""
-
-    # Setup
     set_seed(
         cfg.training.seed,
     )
@@ -213,33 +225,35 @@ def train(
         cfg.logging.level,
     )
 
-    # Initialize accelerator
     accelerator = Accelerator(
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
         mixed_precision=cfg.training.mixed_precision,
         log_with="wandb" if cfg.logging.use_wandb else None,
     )
+    logger.info(
+        f"Distributed training: {accelerator.distributed_type}",
+    )
+    logger.info(
+        f"Mixed precision: {accelerator.mixed_precision}",
+    )
 
-    logger.info(f"Distributed training: {accelerator.distributed_type}")
-    logger.info(f"Mixed precision: {accelerator.mixed_precision}")
-
-    # Initialize W&B if requested
     if cfg.logging.use_wandb and accelerator.is_main_process:
         wandb.init(
             project=cfg.wandb.project,
             name=cfg.wandb.run_name,
-            config=OmegaConf.to_container(cfg, resolve=True),
+            config=OmegaConf.to_container(
+                cfg,
+                resolve=True,
+            ),
         )
 
     tokenizer = create_tokenizer(
         cfg,
     )
-
     model = create_model(
         cfg,
         len(tokenizer.vocab),
     )
-
     train_dataloader, eval_dataloader = load_and_prepare_dataset(
         cfg,
         tokenizer,
@@ -253,7 +267,6 @@ def train(
         weight_decay=0.0,
     )
 
-    # Prepare everything with accelerator for training
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model,
         optimizer,
@@ -261,9 +274,19 @@ def train(
         eval_dataloader,
     )
 
-    # Initialize learning rate scheduler
-    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / cfg.training.gradient_accumulation_steps)
-    max_train_steps = cfg.training.num_train_epochs * num_update_steps_per_epoch
+    streaming = cfg.data.get("streaming", False)
+    if streaming:
+        max_train_steps = cfg.training.get("max_steps")
+        if max_train_steps is None or max_train_steps <= 0:
+            raise ValueError(
+                "When data.streaming=true, set training.max_steps to the desired number of optimization steps.",
+            )
+        num_update_steps_per_epoch = max_train_steps // cfg.training.num_train_epochs
+    else:
+        num_update_steps_per_epoch = math.ceil(
+            len(train_dataloader) / cfg.training.gradient_accumulation_steps,
+        )
+        max_train_steps = cfg.training.num_train_epochs * num_update_steps_per_epoch
 
     lr_scheduler = get_scheduler(
         name=cfg.training.lr_scheduler_type,
@@ -273,28 +296,51 @@ def train(
     )
 
     logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataloader.dataset)}")
-    logger.info(f"  Num eval examples = {len(eval_dataloader.dataset)}")
-    logger.info(f"  Num Epochs = {cfg.training.num_train_epochs}")
-    logger.info(f"  Per device batch size = {cfg.training.per_device_train_batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {cfg.training.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {max_train_steps}")
+    if streaming:
+        logger.info("  Train examples = streaming (unbounded)")
+    else:
+        logger.info(
+            f"  Num examples = {len(train_dataloader.dataset)}",
+        )
+    logger.info(
+        f"  Num eval examples = {len(eval_dataloader.dataset)}",
+    )
+    logger.info(
+        f"  Num Epochs = {cfg.training.num_train_epochs}",
+    )
+    logger.info(
+        f"  Per device batch size = {cfg.training.per_device_train_batch_size}",
+    )
+    logger.info(
+        f"  Gradient Accumulation steps = {cfg.training.gradient_accumulation_steps}",
+    )
+    logger.info(
+        f"  Total optimization steps = {max_train_steps}",
+    )
 
     completed_steps = 0
     best_eval_loss = float("inf")
 
-    os.makedirs(to_absolute_path(cfg.model.output_dir), exist_ok=True)
+    os.makedirs(
+        to_absolute_path(cfg.model.output_dir),
+        exist_ok=True,
+    )
     with open(
-        os.path.join(to_absolute_path(cfg.model.output_dir), "train_config.json"),
+        os.path.join(
+            to_absolute_path(cfg.model.output_dir),
+            "train_config.json",
+        ),
         "w",
     ) as f:
         json.dump(
-            OmegaConf.to_object(cfg=cfg),
+            OmegaConf.to_container(
+                cfg,
+                resolve=True,
+            ),
             f,
             indent=4,
         )
 
-    # Training loop
     for epoch in range(cfg.training.num_train_epochs):
         model.train()
         train_loss = 0.0
@@ -304,53 +350,48 @@ def train(
                 outputs = model(**batch)
                 loss = outputs.loss
                 accelerator.backward(loss)
-
-                # Log training metrics
                 train_loss += loss.detach().float()
 
-                # Clip gradients
                 if cfg.training.max_gradient_norm > 0:
                     accelerator.clip_grad_norm_(
                         model.parameters(),
                         cfg.training.max_gradient_norm,
                     )
-
                 optimizer.step()
                 optimizer.zero_grad()
 
-            # Log and evaluate
             if step % cfg.logging.logging_steps == 0 and step > 0:
                 avg_loss = accelerator.gather(train_loss).mean().item() / cfg.logging.logging_steps
                 train_loss = 0.0
-
-                logger.info(f"Epoch: {epoch}, Step: {step}, Loss: {avg_loss: .4f}")
-
+                logger.info(
+                    f"Epoch: {epoch}, Step: {step}, Loss: {avg_loss:.4e}",
+                )
                 if cfg.logging.use_wandb and accelerator.is_main_process:
+                    if streaming:
+                        train_epoch = completed_steps / max_train_steps * cfg.training.num_train_epochs
+                    else:
+                        train_epoch = epoch + step / len(train_dataloader)
                     wandb.log(
                         {
                             "train/loss": avg_loss,
                             "train/learning_rate": lr_scheduler.get_last_lr()[0],
-                            "train/epoch": epoch + step / len(train_dataloader),
+                            "train/epoch": train_epoch,
                             "train/step": completed_steps,
                         },
                     )
 
-            # Evaluate
             if step % cfg.training.eval_steps == 0 and step > 0:
                 model.eval()
                 eval_loss = 0.0
-
                 for eval_step, eval_batch in enumerate(eval_dataloader):
                     with torch.no_grad():
                         outputs = model(**eval_batch)
-
                     eval_loss += outputs.loss.detach().float()
-
                 eval_loss = accelerator.gather(eval_loss).mean().item() / len(eval_dataloader)
                 perplexity = math.exp(eval_loss)
-
-                logger.info(f"Epoch: {epoch}, Step: {step}, Eval Loss: {eval_loss: .4f}, Perplexity: {perplexity: .2f}")
-
+                logger.info(
+                    f"Epoch: {epoch}, Step: {step}, Eval Loss: {eval_loss:.4e}, Perplexity: {perplexity:.4e}",
+                )
                 if cfg.logging.use_wandb and accelerator.is_main_process:
                     wandb.log(
                         {
@@ -359,24 +400,32 @@ def train(
                             "eval/step": completed_steps,
                         },
                     )
-
-                # Save best model
                 if eval_loss < best_eval_loss:
                     best_eval_loss = eval_loss
                     if accelerator.is_main_process:
-                        logger.info(f"New best model with eval loss: {best_eval_loss: .4f}")
-
+                        logger.info(
+                            f"New best model with eval loss: {best_eval_loss:.4e}",
+                        )
                         accelerator.wait_for_everyone()
                         unwrapped_model = accelerator.unwrap_model(model)
-
-                        os.makedirs(to_absolute_path(cfg.model.output_dir), exist_ok=True)
+                        best_model_dir = os.path.join(
+                            to_absolute_path(cfg.model.output_dir),
+                            "best_eval_loss_model",
+                        )
+                        os.makedirs(
+                            best_model_dir,
+                            exist_ok=True,
+                        )
                         unwrapped_model.save_pretrained(
-                            cfg.model.output_dir,
+                            best_model_dir,
                             save_function=accelerator.save,
                             is_main_process=accelerator.is_main_process,
                         )
                         with open(
-                            os.path.join(to_absolute_path(cfg.model.output_dir), "tokenizer.json"),
+                            os.path.join(
+                                to_absolute_path(cfg.model.output_dir),
+                                "tokenizer.json",
+                            ),
                             "w",
                         ) as f:
                             json.dump(
@@ -384,71 +433,91 @@ def train(
                                 f,
                                 indent=4,
                             )
-
                 model.train()
 
             if accelerator.sync_gradients:
                 completed_steps += 1
                 lr_scheduler.step()
-
-            # Stop if we reach max steps
             if completed_steps >= max_train_steps:
                 break
 
-        # Save at end of epoch
         if accelerator.is_main_process:
-            logger.info(f"Epoch {epoch} completed")
-
+            logger.info(
+                f"Epoch {epoch} completed",
+            )
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-
-            epoch_output_dir = os.path.join(to_absolute_path(cfg.model.output_dir), f"epoch_{epoch}")
-            os.makedirs(epoch_output_dir, exist_ok=True)
+            epoch_output_dir = os.path.join(
+                to_absolute_path(cfg.model.output_dir),
+                f"epoch_{epoch}",
+            )
+            os.makedirs(
+                epoch_output_dir,
+                exist_ok=True,
+            )
             unwrapped_model.save_pretrained(
                 epoch_output_dir,
                 save_function=accelerator.save,
                 is_main_process=accelerator.is_main_process,
             )
-
-            with open(os.path.join(epoch_output_dir, "tokenizer.json"), "w") as f:
+            with open(
+                os.path.join(
+                    epoch_output_dir,
+                    "tokenizer.json",
+                ),
+                "w",
+            ) as f:
                 json.dump(
                     tokenizer.to_dict(),
                     f,
                     indent=4,
                 )
 
-    # Finish training and save final model
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)
-
     if accelerator.is_main_process:
-        final_output_dir = os.path.join(to_absolute_path(cfg.model.output_dir), "final")
-        os.makedirs(final_output_dir, exist_ok=True)
+        final_output_dir = os.path.join(
+            to_absolute_path(cfg.model.output_dir),
+            "final",
+        )
+        os.makedirs(
+            final_output_dir,
+            exist_ok=True,
+        )
         unwrapped_model.save_pretrained(
             final_output_dir,
             save_function=accelerator.save,
         )
-
-        with open(os.path.join(final_output_dir, "tokenizer.json"), "w") as f:
+        with open(
+            os.path.join(
+                final_output_dir,
+                "tokenizer.json",
+            ),
+            "w",
+        ) as f:
             json.dump(
                 tokenizer.to_dict(),
                 f,
                 indent=4,
             )
-
-        logger.info(f"Model saved to {final_output_dir}")
-
+        logger.info(
+            f"Model saved to {final_output_dir}",
+        )
     if cfg.logging.use_wandb and accelerator.is_main_process:
         wandb.finish()
 
 
-@hydra.main(config_path="configs", config_name="midi_transformer")
+@hydra.main(
+    config_path="../configs",
+    config_name="next_token_prediction",
+    version_base=None,
+)
 def main(
     config: DictConfig,
 ) -> None:
-    """Main entry point for the training script."""
-    print(OmegaConf.to_yaml(config))
-
+    print(
+        OmegaConf.to_yaml(config),
+    )
     train(
         config,
     )

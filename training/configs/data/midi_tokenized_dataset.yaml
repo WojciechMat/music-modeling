@@ -1,6 +1,10 @@
-dataset_path: "./datasets/MidiTokenizedDataset"
+# Use .../latest (symlink updated by build script) or a specific .../<config_hash>
+dataset_path: "./midi_datasets/MidiTokenizedDataset/latest"
 train_split: "train"
 eval_split: "validation"
 load_from_disk: true
+# Stream train split from JSONL (no full load into memory)
+streaming: false
+streaming_buffer_size: 10000
 max_seq_length: 128
 sliding_window_stride: 32
