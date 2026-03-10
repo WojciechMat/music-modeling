@@ -88,6 +88,28 @@ def cosine_similarity(
     )
 
 
+def euclidean_distance(
+    a: list[float],
+    b: list[float],
+) -> float:
+    va = np.array(a, dtype=np.float64)
+    vb = np.array(b, dtype=np.float64)
+    return float(np.linalg.norm(va - vb))
+
+
+def embedding_distance(
+    a: list[float],
+    b: list[float],
+    metric: str,
+) -> float:
+    """Distance between embeddings (lower = more similar)."""
+    if metric == "cosine":
+        return 1.0 - cosine_similarity(a, b)
+    if metric == "euclidean":
+        return euclidean_distance(a, b)
+    raise ValueError(f"Unknown metric: {metric}")
+
+
 def render_concatenation(
     notes_first_str: str,
     notes_second_str: str,
@@ -182,6 +204,12 @@ def main() -> None:
     st.sidebar.write(
         f"Loaded **{len(data)}** samples. Ids: {valid_ids[0]} .. {valid_ids[-1]}",
     )
+    distance_metric = st.sidebar.selectbox(
+        "Distance metric",
+        options=["cosine", "euclidean"],
+        format_func=lambda x: "Cosine" if x == "cosine" else "Euclidean",
+        help="Metric used to compute distance between embeddings (lower = more similar).",
+    )
     sample_id = st.sidebar.number_input(
         "Sample id",
         min_value=valid_ids[0],
@@ -239,7 +267,7 @@ def main() -> None:
 
     nearest_10 = []
     if emb:
-        sims = []
+        dists = []
         for i, r in enumerate(
             data,
         ):
@@ -249,38 +277,36 @@ def main() -> None:
             )
             if not e or i == idx:
                 continue
-            sim = cosine_similarity(
+            d = embedding_distance(
                 emb,
                 e,
+                distance_metric,
             )
-            sims.append(
+            dists.append(
                 (
                     i,
                     r["id"],
-                    sim,
+                    d,
                 ),
             )
-        sims.sort(
-            key=lambda x: -x[2],
-        )
-        nearest_10 = sims[:10]
-        least_10 = list(reversed(sims[-10:]))  # least similar first
+        dists.sort(key=lambda x: x[2])  # ascending: smallest distance = most similar
+        nearest_10 = dists[:10]
+        least_10 = list(reversed(dists[-10:]))  # least similar first
 
     if emb:
-        st.header("10 most similar (by embedding)")
+        metric_label = "Cosine" if distance_metric == "cosine" else "Euclidean"
+        st.header(f"10 most similar (by embedding, {metric_label} distance)")
         st.caption(
             "Each example: that sample's notes_first pianoroll, then concatenation of "
             "chosen notes_first + that notes_first."
         )
         if nearest_10:
-            for rank, (i, rid, sim) in enumerate(nearest_10, 1):
-                dist = 1.0 - sim
+            for rank, (i, rid, dist) in enumerate(nearest_10, 1):
                 st.sidebar.write(f"{rank}. id={rid} dist={dist:.4e}")
             chosen_notes_first = row.get("notes_first", "")
-            for rank, (i, rid, sim) in enumerate(nearest_10, 1):
+            for rank, (i, rid, dist) in enumerate(nearest_10, 1):
                 r = data[i]
                 other_notes_first = r.get("notes_first", "")
-                dist = 1.0 - sim
                 st.divider()
                 st.subheader(f"Nearest #{rank} — id={rid} (dist={dist:.4e})")
                 col_a, col_b = st.columns(2)
@@ -301,16 +327,14 @@ def main() -> None:
         else:
             st.caption("No other samples with embeddings.")
 
-        st.header("10 least similar (by embedding)")
+        st.header(f"10 least similar (by embedding, {metric_label} distance)")
         if least_10:
-            for rank, (i, rid, sim) in enumerate(least_10, 1):
-                dist = 1.0 - sim
+            for rank, (i, rid, dist) in enumerate(least_10, 1):
                 st.sidebar.write(f"Least {rank}. id={rid} dist={dist:.4e}")
             chosen_notes_first = row.get("notes_first", "")
-            for rank, (i, rid, sim) in enumerate(least_10, 1):
+            for rank, (i, rid, dist) in enumerate(least_10, 1):
                 r = data[i]
                 other_notes_first = r.get("notes_first", "")
-                dist = 1.0 - sim
                 st.divider()
                 st.subheader(f"Least #{rank} — id={rid} (dist={dist:.4e})")
                 col_a, col_b = st.columns(2)

@@ -1,0 +1,3 @@
+[server]
+# Allow large embedding JSONL uploads (default is 200 MB)
+maxUploadSize = 2000
