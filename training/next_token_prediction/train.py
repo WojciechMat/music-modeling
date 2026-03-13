@@ -321,9 +321,14 @@ def train(
     completed_steps = 0
     best_eval_loss = float("inf")
 
+    output_dir = to_absolute_path(cfg.model.output_dir)
     os.makedirs(
-        to_absolute_path(cfg.model.output_dir),
+        output_dir,
         exist_ok=True,
+    )
+    train_config_dict = OmegaConf.to_container(
+        cfg,
+        resolve=True,
     )
     with open(
         os.path.join(
@@ -333,10 +338,7 @@ def train(
         "w",
     ) as f:
         json.dump(
-            OmegaConf.to_container(
-                cfg,
-                resolve=True,
-            ),
+            train_config_dict,
             f,
             indent=4,
         )
@@ -409,7 +411,7 @@ def train(
                         accelerator.wait_for_everyone()
                         unwrapped_model = accelerator.unwrap_model(model)
                         best_model_dir = os.path.join(
-                            to_absolute_path(cfg.model.output_dir),
+                            output_dir,
                             "best_eval_loss_model",
                         )
                         os.makedirs(
@@ -423,13 +425,25 @@ def train(
                         )
                         with open(
                             os.path.join(
-                                to_absolute_path(cfg.model.output_dir),
+                                output_dir,
                                 "tokenizer.json",
                             ),
                             "w",
                         ) as f:
                             json.dump(
                                 tokenizer.to_dict(),
+                                f,
+                                indent=4,
+                            )
+                        with open(
+                            os.path.join(
+                                best_model_dir,
+                                "train_config.json",
+                            ),
+                            "w",
+                        ) as f:
+                            json.dump(
+                                train_config_dict,
                                 f,
                                 indent=4,
                             )
@@ -448,7 +462,7 @@ def train(
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             epoch_output_dir = os.path.join(
-                to_absolute_path(cfg.model.output_dir),
+                output_dir,
                 f"epoch_{epoch}",
             )
             os.makedirs(
@@ -472,6 +486,18 @@ def train(
                     f,
                     indent=4,
                 )
+        with open(
+            os.path.join(
+                epoch_output_dir,
+                "train_config.json",
+            ),
+            "w",
+        ) as f:
+            json.dump(
+                train_config_dict,
+                f,
+                indent=4,
+            )
 
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)

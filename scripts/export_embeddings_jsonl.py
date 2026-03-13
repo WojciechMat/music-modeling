@@ -112,6 +112,23 @@ def run(
         )
     echo_repetitions = int(emb_cfg["echo_repetitions"])
 
+    train_config_path = model_path / "train_config.json"
+    if not train_config_path.exists():
+        raise FileNotFoundError(
+            f"train_config.json not found inside {model_path}. Expected from embedder training loop.",
+        )
+    with open(
+        train_config_path,
+        "r",
+    ) as f:
+        train_cfg = json.load(
+            f,
+        )
+    experiment_name = train_cfg.get(
+        "experiment_name",
+        model_path.name,
+    )
+
     dataset_hash = dataset_path.name
     model_name = model_path.name
     out_dir = (
@@ -125,7 +142,8 @@ def run(
         parents=True,
         exist_ok=True,
     )
-    out_path = out_dir / "split_with_embeddings.jsonl"
+    out_filename = f"{experiment_name}-{model_name}-split_with_embeddings.jsonl"
+    out_path = out_dir / out_filename
 
     tokenizer = load_tokenizer_from_pretrained(
         model_path,

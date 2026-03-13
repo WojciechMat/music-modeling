@@ -377,21 +377,10 @@ def train(
         output_dir,
         exist_ok=True,
     )
-    with open(
-        os.path.join(
-            output_dir,
-            "train_config.json",
-        ),
-        "w",
-    ) as f:
-        json.dump(
-            OmegaConf.to_container(
-                cfg,
-                resolve=True,
-            ),
-            f,
-            indent=4,
-        )
+    train_config_dict = OmegaConf.to_container(
+        cfg,
+        resolve=True,
+    )
 
     logger.info("***** Running embedder training *****")
     logger.info(
@@ -561,6 +550,18 @@ def train(
                         with open(
                             os.path.join(
                                 best_dir,
+                                "train_config.json",
+                            ),
+                            "w",
+                        ) as f:
+                            json.dump(
+                                train_config_dict,
+                                f,
+                                indent=4,
+                            )
+                        with open(
+                            os.path.join(
+                                best_dir,
                                 "embedding_config.json",
                             ),
                             "w",
@@ -602,6 +603,18 @@ def train(
         ) as f:
             json.dump(
                 tokenizer.to_dict(),
+                f,
+                indent=4,
+            )
+        with open(
+            os.path.join(
+                final_dir,
+                "train_config.json",
+            ),
+            "w",
+        ) as f:
+            json.dump(
+                train_config_dict,
                 f,
                 indent=4,
             )
