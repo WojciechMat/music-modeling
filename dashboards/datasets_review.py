@@ -10,28 +10,11 @@ import streamlit_pianoroll
 import matplotlib.pyplot as plt
 from midi_tokenizers import ExponentialTimeTokenizer
 
+from midi_datasets.MidiDataset.MidiDataset import load_from_directory as load_midi_from_directory
+from midi_datasets.MidiTokenizedDataset.MidiTokenizedDataset import load_from_directory as load_tokenized_from_directory
+
 BROWSE_SEED = 4
 SAMPLES_PER_PAGE = 6
-
-# Load project dataset modules by path to avoid conflict with HuggingFace "datasets" package
-project_root = Path(__file__).resolve().parents[1]
-
-
-def _load_module(name: str, rel_path: str):
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(name, project_root / rel_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_midi_dataset = _load_module("midi_dataset", "midi_datasets/MidiDataset/MidiDataset.py")
-_tokenized_dataset = _load_module(
-    "midi_tokenized_dataset", "midi_datasets/MidiTokenizedDataset/MidiTokenizedDataset.py"
-)
-load_midi_from_directory = _midi_dataset.load_from_directory
-load_tokenized_from_directory = _tokenized_dataset.load_from_directory
 
 st.set_page_config(page_title="MIDI Dataset Explorer", layout="wide")
 

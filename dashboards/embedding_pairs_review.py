@@ -9,26 +9,12 @@ import fortepyan as ff
 import streamlit as st
 import streamlit_pianoroll
 
+from midi_datasets.EmbeddingPairsDataset.EmbeddingPairsDataset import (
+    load_from_directory as load_embedding_pairs_from_directory,
+)
+
 BROWSE_SEED = 4
 SAMPLES_PER_PAGE = 6
-
-# Load project dataset module by path to avoid conflict with HuggingFace "datasets" package
-project_root = Path(__file__).resolve().parents[1]
-
-
-def _load_module(name: str, rel_path: str):
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(name, project_root / rel_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_embedding_pairs = _load_module(
-    "embedding_pairs_dataset", "midi_datasets/EmbeddingPairsDataset/EmbeddingPairsDataset.py"
-)
-load_embedding_pairs_from_directory = _embedding_pairs.load_from_directory
 
 st.set_page_config(page_title="Embedding Pairs Dataset Review", layout="wide")
 
