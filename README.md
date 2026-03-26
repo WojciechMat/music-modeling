@@ -34,7 +34,7 @@ Writes `tmp/data/.../split_with_embeddings.jsonl`.
 
 ## Dashboards
 ```sh
-streamlit run dashboards/datasets_review.py
-streamlit run dashboards/embedding_pairs_review.py
-streamlit run dashboards/embeddings_browse.py
+python -m streamlit run dashboards/datasets_review.py
+python -m streamlit run dashboards/embedding_pairs_review.py
+python -m streamlit run dashboards/embeddings_browse.py
 ```
